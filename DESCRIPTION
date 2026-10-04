@@ -10,3 +10,5 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Depends: R (>= 4.1.0)
 Imports: dplyr, tidyr, tibble, ggplot2, rlang, stats, RVMethods, SimRVPedigree
+URL: https://github.com/fabiha6074/RVRankGlobal
+BugReports: https://github.com/fabiha6074/RVRankGlobal/issues

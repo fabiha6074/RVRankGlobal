@@ -21,6 +21,9 @@ This is a basic example which shows you how to solve a common problem:
 
 ``` r
 library(RVRankGlobal)
-## basic example code
+## data <- make_data(...)
+fit <- fit_model(data)
+post <- variant_posteriors(fit, data)
+results <- summarize_rv(fit, post, data)
 ```
 
