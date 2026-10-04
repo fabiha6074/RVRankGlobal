@@ -1,0 +1,12 @@
+Package: RVRankGlobal
+Title: Prioritize and Rank Rare Genetic Variants Using Penalized Global likelihood
+Version: 0.0.0.9000
+Authors@R: 
+    person("Fabiha", "Binte Farooq", , "first.last@example.com", role = c("aut", "cre"))
+Description: Implements the data construction, penalized composite global likelihood estimation, posterior measures and sumary plots to rank rare variants in disease-enriched families.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends: R (>= 4.1.0)
+Imports: dplyr, tidyr, tibble, ggplot2, rlang, stats, RVMethods, SimRVPedigree
