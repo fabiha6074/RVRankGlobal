@@ -1,0 +1,17 @@
+utils::globalVariables(c(
+  "FamID",
+  "FamID_chr",
+  "ID",
+  "Type",
+  "affected",
+  "age",
+  "age_lookup",
+  "age_onset",
+  "causal_flag",
+  "copies",
+  "h_indiv",
+  "hazard",
+  "pos",
+  "unique_ID",
+  "variant_id"
+))

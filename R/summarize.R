@@ -4,179 +4,361 @@
 #' @param fit Output from [fit_model()].
 #' @param post Output from [variant_posteriors()].
 #' @param data Output from [make_data()].
-#' @param chr_keep Optional vector of chromosomes to keep. If NULL, all chromosomes are included.
+#' @param chr_keep Optional vector of chromosomes to keep. If `NULL`, all
+#'   chromosomes are included.
 #' @param rank_by Metric used to rank variants.
-#' @param metrics Metrics to include in plots.
+#' @param metrics Metrics to plot.
 #' @param top_n Number of top variants to return.
-#' @param facet_by_chr Logical. If TRUE, facet plots by chromosome.
-#' @param plot Logical. If TRUE, create plots.
-#' @param base_size Base font size for ggplot objects.
+#' @param plot Logical. If `TRUE`, draw the plots immediately.
+#' @param show_estimates Logical. If `TRUE`, show fitted parameter estimates
+#'   in mathematical notation below the title.
+#' @param point_cex Point-size multiplier.
+#' @param main_cex Title-size multiplier.
 #'
-#' @return A list with ranked results, top variants, causal variant summaries, plots, and settings.
+#' @return A list containing ranked results, top variants, reusable base-R
+#'   plotting functions, and settings.
 #' @export
-#'
-# summarize and rank the rare variants
-
 summarize_rv <- function(fit,
-                          post,
-                          data,
-                          chr_keep = NULL,
-                          rank_by = c("posterior_O1", "EB", "EB_given_O1", "pi_hat", "H"),
-                          metrics = c("posterior_O1", "EB"),
-                          top_n = 50,
-                          facet_by_chr = TRUE,
-                          plot = TRUE,
-                          base_size = 12) {
+                         post,
+                         data,
+                         chr_keep = NULL,
+                         rank_by = c("posterior_O1", "EB", "EB_given_O1", "pi_hat", "H"),
+                         metrics = c("posterior_O1", "EB"),
+                         top_n = 50,
+                         plot = TRUE,
+                         show_estimates = TRUE,
+                         point_cex = 0.9,
+                         main_cex = 1.05) {
 
-  stopifnot(inherits(data, "fbf_data"))
-  stopifnot(is.data.frame(post))
-
-  chr_col <- "chr"
-  pos_col <- "pos"
-  flag_col <- "causal_flag"
-  pos_unit <- 1e6
+  if (!inherits(data, "fbf_data")) {
+    stop("data must be an object returned by make_data().")
+  }
+  if (!(inherits(fit, "fbf_fit") || is.list(fit))) {
+    stop("fit must be an object returned by fit_model().")
+  }
+  if (!is.data.frame(post)) {
+    stop("post must be a data frame returned by variant_posteriors().")
+  }
 
   rank_by <- match.arg(rank_by)
 
-  if (is.null(data$meta_all)) stop("data$meta_all is NULL.")
-  meta_all <- data$meta_all
+  required_post <- c(
+    "variant_id", "posterior_O1", "EB", "EB_given_O1", "F", "H", "pi_hat"
+  )
+  missing_post <- setdiff(required_post, names(post))
+  if (length(missing_post) > 0L) {
+    stop("post missing columns: ", paste(missing_post, collapse = ", "))
+  }
 
-  if (!(chr_col %in% names(meta_all))) stop("meta_all missing chr_col: ", chr_col)
-  if (!(pos_col %in% names(meta_all))) stop("meta_all missing pos_col: ", pos_col)
+  if (is.null(data$meta_all)) {
+    stop("data$meta_all is NULL.")
+  }
 
-  need_post <- c("variant_id", "posterior_O1", "EB", "EB_given_O1", "F", "H", "pi_hat")
-  miss_post <- setdiff(need_post, names(post))
-  if (length(miss_post) > 0) stop("post missing columns: ", paste(miss_post, collapse = ", "))
+  meta_all <- as.data.frame(data$meta_all)
+  if (!("variant_id" %in% names(meta_all))) {
+    stop("data$meta_all is missing variant_id.")
+  }
+  if (!("chr" %in% names(meta_all))) {
+    stop("data$meta_all is missing chr.")
+  }
+  if (!("pos" %in% names(meta_all))) {
+    stop("data$meta_all is missing pos.")
+  }
 
-  variant_family_label <- function(vid) {
-    vid <- as.character(vid)
+  # Add missing metadata without allowing merge() to reorder variants.
+  results <- as.data.frame(post)
+  meta_match <- match(results$variant_id, meta_all$variant_id)
 
-    if (is.null(data$global_var_info[[vid]])) {
-      return("Unknown")
+  metadata_columns <- intersect(
+    c("chr", "pos", "Type", "causal_flag"),
+    names(meta_all)
+  )
+
+  for (column_name in metadata_columns) {
+    if (!(column_name %in% names(results))) {
+      results[[column_name]] <- meta_all[[column_name]][meta_match]
     }
-
-    info <- data$global_var_info[[vid]]
-
-    fam_has_carrier <- vapply(seq_along(data$settings$fam_ids), function(k) {
-      length(info$carriers_by_fam[[k]]) > 0
-    }, logical(1))
-
-    fams <- data$settings$fam_ids[fam_has_carrier]
-
-    if (length(fams) == 0) return("No carrier")
-
-    paste(fams, collapse = "+")
   }
 
-  # Avoid duplicate chr/pos columns if variant_posteriors() already merged meta.
-  if (all(c(chr_col, pos_col) %in% names(post))) {
-    results0 <- tibble::as_tibble(post)
-  } else {
-    results0 <- tibble::as_tibble(post) |>
-      dplyr::left_join(meta_all, by = "variant_id")
+  if (!("chr" %in% names(results)) || !("pos" %in% names(results))) {
+    stop("Chromosome or position metadata could not be added to post.")
   }
 
-  results <- results0 |>
-    dplyr::filter(!is.na(.data[[chr_col]]), !is.na(.data[[pos_col]])) |>
-    dplyr::mutate(
-      chr_plot = as.character(.data[[chr_col]]),
-      pos_num = suppressWarnings(as.numeric(.data[[pos_col]])),
-      pos_plot = .data$pos_num / pos_unit,
-      fam_shape = vapply(.data$variant_id, variant_family_label, character(1))
-    ) |>
-    dplyr::filter(is.finite(.data$pos_num))
+  variant_family_label <- function(variant_id) {
+    variant_id <- as.character(variant_id)
+    info <- data$global_var_info[[variant_id]]
+
+    if (is.null(info)) return("Unknown")
+
+    has_carrier <- vapply(
+      seq_along(data$settings$fam_ids),
+      function(k) length(info$carriers_by_fam[[k]]) > 0L,
+      logical(1)
+    )
+
+    families <- data$settings$fam_ids[has_carrier]
+    if (length(families) == 0L) return("No carrier")
+
+    paste(families, collapse = "+")
+  }
+
+  results$chr_plot <- as.character(results$chr)
+  results$pos_num <- suppressWarnings(as.numeric(results$pos))
+  results$fam_shape <- vapply(
+    results$variant_id,
+    variant_family_label,
+    character(1)
+  )
+
+  keep <- !is.na(results$chr_plot) & is.finite(results$pos_num)
+  results <- results[keep, , drop = FALSE]
 
   if (!is.null(chr_keep)) {
-    results <- results |>
-      dplyr::filter(.data$chr_plot %in% as.character(chr_keep))
+    results <- results[
+      results$chr_plot %in% as.character(chr_keep),
+      ,
+      drop = FALSE
+    ]
   }
 
-  ranked <- results |>
-    dplyr::arrange(dplyr::desc(.data[[rank_by]])) |>
-    dplyr::mutate(rank = dplyr::row_number())
-
-  top_tbl <- ranked |>
-    dplyr::slice_head(n = min(top_n, nrow(ranked)))
-
-  fam_txt <- if (!is.null(data$settings$fam_ids)) paste(data$settings$fam_ids, collapse = ",") else "?"
-
-  chr_vals <- unique(ranked$chr_plot)
-  chr_vals_num <- suppressWarnings(as.numeric(chr_vals))
-
-  if (all(is.finite(chr_vals_num))) {
-    chr_vals <- chr_vals[order(chr_vals_num)]
-  } else {
-    chr_vals <- sort(chr_vals)
+  if (nrow(results) == 0L) {
+    stop("No variants remain after applying chromosome and position filters.")
   }
 
-  chr_txt <- paste(chr_vals, collapse = ",")
+  # Determine chromosome order: numeric chromosomes first, then X/Y/MT.
+  chromosome_names <- unique(results$chr_plot)
+  chromosome_numeric <- suppressWarnings(as.numeric(chromosome_names))
+  chromosome_order <- order(
+    is.na(chromosome_numeric),
+    chromosome_numeric,
+    chromosome_names
+  )
+  chromosome_names <- chromosome_names[chromosome_order]
 
-  lam_txt <- if (!is.null(fit$lambda_hat)) sprintf("lambda_hat=%.3g", fit$lambda_hat) else "lambda_hat=?"
-  eta_txt <- if (!is.null(fit$eta_hat)) {
-    paste(sprintf("%s=%.2f", names(fit$eta_hat), fit$eta_hat), collapse = ", ")
-  } else {
-    "eta_hat=?"
+  # Maximum observed position on each chromosome.
+  chromosome_max <- vapply(
+    chromosome_names,
+    function(chromosome) {
+      max(results$pos_num[results$chr_plot == chromosome], na.rm = TRUE)
+    },
+    numeric(1)
+  )
+
+  chromosome_offset <- c(0, head(cumsum(chromosome_max), -1))
+  names(chromosome_offset) <- chromosome_names
+
+  chromosome_centre <- chromosome_offset + chromosome_max / 2
+  chromosome_band <- (seq_along(chromosome_names) - 1L) %% 2L
+  names(chromosome_band) <- chromosome_names
+
+  results$pos_manhattan <- results$pos_num +
+    unname(chromosome_offset[results$chr_plot])
+  results$chr_band <- unname(chromosome_band[results$chr_plot])
+
+  ranked <- results[
+    order(results[[rank_by]], decreasing = TRUE, na.last = TRUE),
+    ,
+    drop = FALSE
+  ]
+  ranked$rank <- seq_len(nrow(ranked))
+
+  top_count <- min(top_n, nrow(ranked))
+  top_tbl <- ranked[seq_len(top_count), , drop = FALSE]
+
+  # Assign one plotting symbol to each carrier family.
+  family_names <- sort(unique(ranked$fam_shape))
+  available_shapes <- c(16, 17, 15, 18, 8, 3, 7, 4)
+  family_shapes <- rep(available_shapes, length.out = length(family_names))
+  names(family_shapes) <- family_names
+
+  chromosome_colors <- c("#27408B", "#87A7D9")
+
+  metric_axis_label <- function(metric) {
+    switch(
+      metric,
+      posterior_O1 = "Posterior P(O=1 | G,F,H)",
+      EB = "Posterior mean E[B | G,F,H]",
+      EB_given_O1 = "Posterior mean E[B | O=1,G,F,H]",
+      pi_hat = "Prior probability pi_hat(F,H)",
+      H = "Age-onset unusualness score H",
+      metric
+    )
   }
 
-  has_flag <- !is.null(flag_col) && flag_col %in% names(ranked)
+  metric_title <- function(metric) {
+    switch(
+      metric,
+      posterior_O1 = "Posterior Evidence of Variant Over-Transmission",
+      EB = "Estimated Transmission Effects Across the Genome",
+      EB_given_O1 = "Transmission Effects Among Over-Transmitted Variants",
+      pi_hat = "Estimated Prior Probability of Over-Transmission",
+      H = "Age-at-Onset Unusualness Across the Genome",
+      "Rare-Variant Prioritization"
+    )
+  }
 
-  make_metric_plot <- function(df, metric) {
-    ylab <- switch(metric,
-                   posterior_O1 = "Posterior P(O=1 | G,F,H)",
-                   EB = "Posterior mean E[B | G,F,H]",
-                   EB_given_O1 = "Posterior mean E[B | O=1,G,F,H]",
-                   pi_hat = "Prior probability pi_hat(F,H)",
-                   H = "Age-onset unusualness score H",
-                   metric)
+  parameter_expression <- function() {
+    if (!show_estimates) return(NULL)
 
-    p <- ggplot2::ggplot(
-      df,
-      ggplot2::aes(
-        x = .data$pos_plot,
-        y = .data[[metric]],
-        shape = .data$fam_shape
+    format_estimate <- function(x) {
+      trimws(formatC(x, digits = 3, format = "g"))
+    }
+
+    expression_parts <- character(0)
+
+    if (!is.null(fit$lambda_hat) && is.finite(fit$lambda_hat)) {
+      expression_parts <- c(
+        expression_parts,
+        paste0("hat(lambda) == ", format_estimate(fit$lambda_hat))
       )
-    ) +
-      ggplot2::geom_point(color = "grey70", size = 1.8)
-
-    if (has_flag) {
-      p <- p +
-        ggplot2::geom_point(
-          data = dplyr::filter(df, .data[[flag_col]] %in% c(TRUE, 1, "1")),
-          color = "red",
-          size = 2.6
-        ) +
-        ggplot2::geom_vline(
-          data = dplyr::filter(df, .data[[flag_col]] %in% c(TRUE, 1, "1")),
-          ggplot2::aes(xintercept = .data$pos_plot),
-          inherit.aes = FALSE,
-          linetype = "dashed",
-          color = "orange",
-          show.legend = FALSE
-        )
     }
 
-    if (facet_by_chr) {
-      p <- p + ggplot2::facet_wrap(~ chr_plot, scales = "free_x")
+    if (!is.null(fit$eta_hat)) {
+      eta_values <- as.numeric(fit$eta_hat)
+
+      for (j in seq_along(eta_values)) {
+        if (is.finite(eta_values[j])) {
+          expression_parts <- c(
+            expression_parts,
+            paste0(
+              "hat(eta)[", j - 1L, "] == ",
+              format_estimate(eta_values[j])
+            )
+          )
+        }
+      }
     }
 
-    p +
-      ggplot2::labs(
-        x = sprintf("Genomic position (%s)", if (pos_unit == 1e6) "Mb" else "bp"),
-        y = ylab,
-        shape = "Carrier family",
-        title = sprintf("chr=%s | fam=%s | %s | %s", chr_txt, fam_txt, metric, lam_txt),
-        subtitle = eta_txt
-      ) +
-      ggplot2::theme_minimal(base_size = base_size) +
-      ggplot2::theme(legend.position = "bottom")
+    if (length(expression_parts) == 0L) return(NULL)
+
+    parse(
+      text = paste(expression_parts, collapse = ' ~~ "," ~~ ')
+    )[[1]]
   }
 
-  plots <- list()
-  if (plot) {
-    for (m in metrics) {
-      if (!(m %in% names(ranked))) stop("Requested metric not in results/post: ", m)
-      plots[[m]] <- make_metric_plot(ranked, m)
+  causal_indicator <- rep(FALSE, nrow(ranked))
+  if ("causal_flag" %in% names(ranked)) {
+    causal_indicator <- tolower(as.character(ranked$causal_flag)) %in%
+      c("true", "1", "yes", "y", "causal")
+  }
+
+  draw_metric <- function(metric) {
+    y <- ranked[[metric]]
+    finite_y <- is.finite(y)
+
+    if (!any(finite_y)) {
+      stop("Metric contains no finite values: ", metric)
+    }
+
+    point_colors <- chromosome_colors[ranked$chr_band + 1L]
+    point_shapes <- unname(family_shapes[ranked$fam_shape])
+
+    graphics::plot(
+      x = ranked$pos_manhattan[finite_y],
+      y = y[finite_y],
+      type = "n",
+      xaxt = "n",
+      xlab = "Chromosome",
+      ylab = metric_axis_label(metric),
+      main = metric_title(metric),
+      cex.main = main_cex,
+      bty = "l"
+    )
+
+    graphics::axis(
+      side = 1,
+      at = chromosome_centre,
+      labels = chromosome_names,
+      tick = FALSE
+    )
+
+    # Light vertical separators between chromosomes.
+    if (length(chromosome_offset) > 1L) {
+      graphics::abline(
+        v = chromosome_offset[-1],
+        col = "grey90",
+        lty = 3
+      )
+    }
+
+    graphics::points(
+      x = ranked$pos_manhattan[finite_y],
+      y = y[finite_y],
+      pch = point_shapes[finite_y],
+      col = point_colors[finite_y],
+      cex = point_cex
+    )
+
+    causal_to_plot <- causal_indicator & finite_y
+    if (any(causal_to_plot)) {
+      graphics::abline(
+        v = ranked$pos_manhattan[causal_to_plot],
+        col = "orange",
+        lty = 2,
+        lwd = 1
+      )
+
+      graphics::points(
+        x = ranked$pos_manhattan[causal_to_plot],
+        y = y[causal_to_plot],
+        pch = point_shapes[causal_to_plot],
+        col = "red",
+        cex = point_cex * 1.5,
+        lwd = 1.5
+      )
+    }
+
+    graphics::legend(
+      "topright",
+      legend = family_names,
+      pch = family_shapes,
+      col = "grey20",
+      title = "Carrier family",
+      bty = "n",
+      cex = 0.8
+    )
+
+    estimate_label <- parameter_expression()
+    if (!is.null(estimate_label)) {
+      graphics::mtext(
+        estimate_label,
+        side = 3,
+        line = 0.15,
+        cex = 0.75
+      )
+    }
+
+    invisible(NULL)
+  }
+
+  make_plotter <- function(metric) {
+    force(metric)
+    function() draw_metric(metric)
+  }
+
+  plotters <- setNames(
+    lapply(metrics, make_plotter),
+    metrics
+  )
+
+  if (plot && length(metrics) > 0L) {
+    old_par <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(old_par), add = TRUE)
+
+    number_of_plots <- length(metrics)
+    number_of_columns <- if (number_of_plots <= 2L) number_of_plots else 2L
+    number_of_rows <- ceiling(number_of_plots / number_of_columns)
+
+    graphics::par(
+      mfrow = c(number_of_rows, number_of_columns),
+      mar = c(4.2, 4.5, 4.2, 1.2)
+    )
+
+    for (metric in metrics) {
+      if (!(metric %in% names(ranked))) {
+        stop("Requested metric not in results/post: ", metric)
+      }
+      draw_metric(metric)
     }
   }
 
@@ -184,12 +366,12 @@ summarize_rv <- function(fit,
     results = results,
     ranked = ranked,
     top = top_tbl,
-    plots = plots,
+    plots = plotters,
     settings = list(
       chr_keep = chr_keep,
       rank_by = rank_by,
       metrics = metrics,
-      facet_by_chr = facet_by_chr,
+      show_estimates = show_estimates,
       top_n = top_n
     )
   )

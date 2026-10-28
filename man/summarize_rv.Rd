@@ -12,9 +12,10 @@ summarize_rv(
   rank_by = c("posterior_O1", "EB", "EB_given_O1", "pi_hat", "H"),
   metrics = c("posterior_O1", "EB"),
   top_n = 50,
-  facet_by_chr = TRUE,
   plot = TRUE,
-  base_size = 12
+  show_estimates = TRUE,
+  point_cex = 0.9,
+  main_cex = 1.05
 )
 }
 \arguments{
@@ -24,22 +25,27 @@ summarize_rv(
 
 \item{data}{Output from \code{\link[=make_data]{make_data()}}.}
 
-\item{chr_keep}{Optional vector of chromosomes to keep. If NULL, all chromosomes are included.}
+\item{chr_keep}{Optional vector of chromosomes to keep. If \code{NULL}, all
+chromosomes are included.}
 
 \item{rank_by}{Metric used to rank variants.}
 
-\item{metrics}{Metrics to include in plots.}
+\item{metrics}{Metrics to plot.}
 
 \item{top_n}{Number of top variants to return.}
 
-\item{facet_by_chr}{Logical. If TRUE, facet plots by chromosome.}
+\item{plot}{Logical. If \code{TRUE}, draw the plots immediately.}
 
-\item{plot}{Logical. If TRUE, create plots.}
+\item{show_estimates}{Logical. If \code{TRUE}, show fitted parameter estimates
+in mathematical notation below the title.}
 
-\item{base_size}{Base font size for ggplot objects.}
+\item{point_cex}{Point-size multiplier.}
+
+\item{main_cex}{Title-size multiplier.}
 }
 \value{
-A list with ranked results, top variants, causal variant summaries, plots, and settings.
+A list containing ranked results, top variants, reusable base-R
+plotting functions, and settings.
 }
 \description{
 Summarize rare variant posterior ranking results
