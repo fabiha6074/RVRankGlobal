@@ -14,6 +14,7 @@ summarize_rv(
   top_n = 50,
   plot = TRUE,
   show_estimates = TRUE,
+  position_unit = c("Mb", "bp"),
   point_cex = 0.9,
   main_cex = 1.05
 )
@@ -38,6 +39,9 @@ chromosomes are included.}
 
 \item{show_estimates}{Logical. If \code{TRUE}, show fitted parameter estimates
 in mathematical notation below the title.}
+
+\item{position_unit}{Unit used for genomic-position labels on the x-axis.
+Use \code{"Mb"} for megabases or \code{"bp"} for base pairs.}
 
 \item{point_cex}{Point-size multiplier.}
 

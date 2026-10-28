@@ -1,4 +1,3 @@
-
 #' Summarize rare variant posterior ranking results
 #'
 #' @param fit Output from [fit_model()].
@@ -12,6 +11,8 @@
 #' @param plot Logical. If `TRUE`, draw the plots immediately.
 #' @param show_estimates Logical. If `TRUE`, show fitted parameter estimates
 #'   in mathematical notation below the title.
+#' @param position_unit Unit used for genomic-position labels on the x-axis.
+#'   Use `"Mb"` for megabases or `"bp"` for base pairs.
 #' @param point_cex Point-size multiplier.
 #' @param main_cex Title-size multiplier.
 #'
@@ -27,6 +28,7 @@ summarize_rv <- function(fit,
                          top_n = 50,
                          plot = TRUE,
                          show_estimates = TRUE,
+                         position_unit = c("Mb", "bp"),
                          point_cex = 0.9,
                          main_cex = 1.05) {
 
@@ -41,6 +43,7 @@ summarize_rv <- function(fit,
   }
 
   rank_by <- match.arg(rank_by)
+  position_unit <- match.arg(position_unit)
 
   required_post <- c(
     "variant_id", "posterior_O1", "EB", "EB_given_O1", "F", "H", "pi_hat"
@@ -144,7 +147,7 @@ summarize_rv <- function(fit,
     numeric(1)
   )
 
-  chromosome_offset <- c(0, head(cumsum(chromosome_max), -1))
+  chromosome_offset <- c(0, utils::head(cumsum(chromosome_max), -1))
   names(chromosome_offset) <- chromosome_names
 
   chromosome_centre <- chromosome_offset + chromosome_max / 2
@@ -172,6 +175,38 @@ summarize_rv <- function(fit,
   names(family_shapes) <- family_names
 
   chromosome_colors <- c("#27408B", "#87A7D9")
+
+  # Build within-chromosome genomic-position ticks, translated to the
+  # cumulative Manhattan coordinates used for plotting.
+  position_scale <- if (position_unit == "Mb") 1e6 else 1
+  position_axis_title <- paste0("Genomic position (", position_unit, ")")
+  position_tick_at <- numeric(0)
+  position_tick_labels <- character(0)
+
+  for (i in seq_along(chromosome_names)) {
+    chromosome <- chromosome_names[i]
+    local_ticks <- pretty(c(0, chromosome_max[i]), n = 3)
+    local_ticks <- local_ticks[
+      local_ticks >= 0 & local_ticks <= chromosome_max[i]
+    ]
+
+    # Do not print two zero labels at a boundary between chromosomes.
+    if (i > 1L) local_ticks <- local_ticks[local_ticks > 0]
+
+    position_tick_at <- c(
+      position_tick_at,
+      chromosome_offset[chromosome] + local_ticks
+    )
+    position_tick_labels <- c(
+      position_tick_labels,
+      format(
+        local_ticks / position_scale,
+        trim = TRUE,
+        scientific = FALSE,
+        digits = 4
+      )
+    )
+  }
 
   metric_axis_label <- function(metric) {
     switch(
@@ -242,7 +277,7 @@ summarize_rv <- function(fit,
       c("true", "1", "yes", "y", "causal")
   }
 
-  draw_metric <- function(metric) {
+  draw_metric <- function(metric, show_family_legend = TRUE) {
     y <- ranked[[metric]]
     finite_y <- is.finite(y)
 
@@ -258,7 +293,7 @@ summarize_rv <- function(fit,
       y = y[finite_y],
       type = "n",
       xaxt = "n",
-      xlab = "Chromosome",
+      xlab = "",
       ylab = metric_axis_label(metric),
       main = metric_title(metric),
       cex.main = main_cex,
@@ -267,9 +302,26 @@ summarize_rv <- function(fit,
 
     graphics::axis(
       side = 1,
+      at = position_tick_at,
+      labels = position_tick_labels,
+      cex.axis = 0.7,
+      tck = -0.012
+    )
+
+    # Keep chromosome context on a second, unobtrusive row.
+    graphics::axis(
+      side = 1,
       at = chromosome_centre,
-      labels = chromosome_names,
-      tick = FALSE
+      labels = paste0("Chr ", chromosome_names),
+      tick = FALSE,
+      line = 1.15,
+      cex.axis = 0.75
+    )
+    graphics::mtext(
+      position_axis_title,
+      side = 1,
+      line = 2.75,
+      cex = 0.85
     )
 
     # Light vertical separators between chromosomes.
@@ -308,15 +360,28 @@ summarize_rv <- function(fit,
       )
     }
 
-    graphics::legend(
-      "topright",
-      legend = family_names,
-      pch = family_shapes,
-      col = "grey20",
-      title = "Carrier family",
-      bty = "n",
-      cex = 0.8
-    )
+    if (show_family_legend) {
+      plot_limits <- graphics::par("usr")
+      legend_x <- plot_limits[2] + 0.04 * diff(plot_limits[1:2])
+      legend_y <- plot_limits[4]
+
+      graphics::legend(
+        x = legend_x,
+        y = legend_y,
+        legend = family_names,
+        pch = family_shapes,
+        col = "grey20",
+        title = "Carrier family",
+        bty = "n",
+        cex = 0.72,
+        ncol = 1,
+        xpd = NA,
+        xjust = 0,
+        yjust = 1,
+        x.intersp = 0.7,
+        y.intersp = 0.85
+      )
+    }
 
     estimate_label <- parameter_expression()
     if (!is.null(estimate_label)) {
@@ -333,7 +398,12 @@ summarize_rv <- function(fit,
 
   make_plotter <- function(metric) {
     force(metric)
-    function() draw_metric(metric)
+    function() {
+      old_par <- graphics::par(no.readonly = TRUE)
+      on.exit(graphics::par(old_par), add = TRUE)
+      graphics::par(mar = c(5.4, 4.5, 4.2, 7.2))
+      draw_metric(metric, show_family_legend = TRUE)
+    }
   }
 
   plotters <- setNames(
@@ -351,14 +421,19 @@ summarize_rv <- function(fit,
 
     graphics::par(
       mfrow = c(number_of_rows, number_of_columns),
-      mar = c(4.2, 4.5, 4.2, 1.2)
+      mar = c(5.4, 4.5, 4.2, 1.2),
+      oma = c(0, 0, 0, 7.2)
     )
 
-    for (metric in metrics) {
+    for (metric_index in seq_along(metrics)) {
+      metric <- metrics[metric_index]
       if (!(metric %in% names(ranked))) {
         stop("Requested metric not in results/post: ", metric)
       }
-      draw_metric(metric)
+      draw_metric(
+        metric,
+        show_family_legend = metric_index == length(metrics)
+      )
     }
   }
 
@@ -372,6 +447,7 @@ summarize_rv <- function(fit,
       rank_by = rank_by,
       metrics = metrics,
       show_estimates = show_estimates,
+      position_unit = position_unit,
       top_n = top_n
     )
   )
